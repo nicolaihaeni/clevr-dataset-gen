@@ -20,7 +20,7 @@ def get_args():
     )
     parser.add_argument("--n_imgs", type=int, default=10000, help="number of scenes")
     parser.add_argument(
-        "--n_views", type=int, default=3, help="number of views per scene"
+        "--n_views", type=int, default=4, help="number of views per scene"
     )
     parser.add_argument("--H", type=int, default=240, help="number of views per scene")
     parser.add_argument("--W", type=int, default=320, help="number of views per scene")
@@ -91,24 +91,34 @@ def main():
         if ii % 1000 == 0:
             print(f"Writting data point {ii} of {args.n_imgs}")
 
+        with open(
+            os.path.join(scene_dir, f"CLEVR_{str(ii).zfill(6)}.json"),
+            "r",
+        ) as json_file:
+            data = json.load(json_file)
+
         for jj in range(0, args.n_views):
+            angle = jj * 90
             rgb = cv2.imread(
-                os.path.join(img_dir, f"CLEVR_{args.split}_{str(ii).zfill(6)}_{jj}.png")
+                os.path.join(
+                    img_dir, f"CLEVR_{str(ii).zfill(6)}_{str(angle).zfill(3)}.png"
+                )
             )
             image_set[ii, jj] = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
             depth = cv2.imread(
                 os.path.join(
-                    img_dir, f"CLEVR_{args.split}_{str(ii).zfill(6)}_{jj}_depth0001.exr"
+                    img_dir,
+                    f"CLEVR_{str(ii).zfill(6)}_{str(angle).zfill(3)}_depth0001.exr",
                 ),
                 cv2.IMREAD_ANYDEPTH,
             )
-            depth_set[ii, jj] = depth * 1000  # depth in mm
+            depth_set[ii, jj] = depth  # depth in m
 
             normal = cv2.imread(
                 os.path.join(
                     img_dir,
-                    f"CLEVR_{args.split}_{str(ii).zfill(6)}_{jj}_normal0001.exr",
+                    f"CLEVR_{str(ii).zfill(6)}_{str(angle).zfill(3)}_normal0001.exr",
                 ),
                 cv2.IMREAD_ANYDEPTH,
             )
@@ -116,7 +126,8 @@ def main():
 
             id = cv2.imread(
                 os.path.join(
-                    img_dir, f"CLEVR_{args.split}_{str(ii).zfill(6)}_{jj}_id0001.exr"
+                    img_dir,
+                    f"CLEVR_{str(ii).zfill(6)}_{str(angle).zfill(3)}_id0001.exr",
                 ),
                 cv2.IMREAD_ANYDEPTH,
             ).astype(np.uint8)
@@ -128,20 +139,12 @@ def main():
                 id[:, :] = np.where(id == u, new_range[kk], id[:, :])
             id_set[ii, jj] = id
 
-            with open(
-                os.path.join(
-                    scene_dir, f"CLEVR_{args.split}_{str(ii).zfill(6)}_{jj}.json"
-                ),
-                "r",
-            ) as json_file:
-                data = json.load(json_file)
-
-            extr = np.array(data["cam_extrinsics"])
-            extrinsics_set[ii, jj] = extr
+            extr = np.array(data["extrinsics"])
+            extrinsics_set[ii, jj] = extr[jj]
 
             # Only load intrinsics once
             if jj == 0:
-                intr = np.array(data["cam_intrinsics"])
+                intr = np.array(data["intrinsics"])
                 intrinsics_set[ii] = intr
 
 
