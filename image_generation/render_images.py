@@ -9,6 +9,7 @@ from __future__ import print_function
 import math, sys, random, argparse, json, os, tempfile
 from datetime import datetime as dt
 from collections import Counter
+from utils import *
 
 """
 Renders random scenes using Blender, each with with a random number of objects;
@@ -25,7 +26,7 @@ blender --background --python render_images.py -- [arguments to this script]
 INSIDE_BLENDER = True
 try:
     import bpy, bpy_extras
-    from mathutils import Vector
+    from mathutils import Matrix, Vector
 except ImportError as e:
     INSIDE_BLENDER = False
 if INSIDE_BLENDER:
@@ -83,13 +84,13 @@ parser.add_argument(
 # Settings for objects
 parser.add_argument(
     "--min_objects",
-    default=3,
+    default=1,
     type=int,
     help="The minimum number of objects to place in each scene",
 )
 parser.add_argument(
     "--max_objects",
-    default=10,
+    default=4,
     type=int,
     help="The maximum number of objects to place in each scene",
 )
@@ -148,14 +149,14 @@ parser.add_argument(
     + "scene structure for each image.",
 )
 parser.add_argument(
-    "--output_image_dir",
-    default="../output/images/",
+    "--output_dir",
+    default="../output/",
     help="The directory where output images will be stored. It will be "
     + "created if it does not exist.",
 )
 parser.add_argument(
     "--output_scene_dir",
-    default="../output/scenes/",
+    default="../output/",
     help="The directory where output JSON scene structures will be stored. "
     + "It will be created if it does not exist.",
 )
@@ -275,35 +276,38 @@ parser.add_argument(
 
 def main(args):
     num_digits = 6
-    prefix = "%s_%s_" % (args.filename_prefix, args.split)
-    img_template = "%s%%0%dd.png" % (prefix, num_digits)
+    prefix = "%s_" % (args.filename_prefix)
+    img_template = "%s%%0%dd" % (prefix, num_digits)
     scene_template = "%s%%0%dd.json" % (prefix, num_digits)
     blend_template = "%s%%0%dd.blend" % (prefix, num_digits)
-    img_template = os.path.join(args.output_image_dir, img_template)
-    scene_template = os.path.join(args.output_scene_dir, scene_template)
-    blend_template = os.path.join(args.output_blend_dir, blend_template)
+    output_path = os.path.join(args.output_dir, args.split, "images")
+    img_template = os.path.join(args.output_dir, args.split, "images", img_template)
+    scene_template = os.path.join(
+        args.output_scene_dir, args.split, "scenes", scene_template
+    )
+    blend_template = os.path.join(args.output_blend_dir, args.split, blend_template)
 
-    if not os.path.isdir(args.output_image_dir):
-        os.makedirs(args.output_image_dir)
-    if not os.path.isdir(args.output_scene_dir):
-        os.makedirs(args.output_scene_dir)
+    if not os.path.isdir(args.output_dir):
+        os.makedirs(os.path.join(args.output_dir, args.split, "images"))
+        os.makedirs(os.path.join(args.output_dir, args.split, "scenes"))
     if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
-        os.makedirs(args.output_blend_dir)
+        os.makedirs(os.path.join(args.output_blend_dir, args.split))
 
     all_scene_paths = []
-    for i in range(args.num_images):
-        img_path = img_template % (i + args.start_idx)
-        scene_path = scene_template % (i + args.start_idx)
+    for i in range(args.start_idx, args.num_images):
+        img_path = img_template % (i)
+        scene_path = scene_template % (i)
         all_scene_paths.append(scene_path)
         blend_path = None
         if args.save_blendfiles == 1:
-            blend_path = blend_template % (i + args.start_idx)
+            blend_path = blend_template % (i)
         num_objects = random.randint(args.min_objects, args.max_objects)
         render_scene(
             args,
             num_objects=num_objects,
-            output_index=(i + args.start_idx),
+            output_index=(i),
             output_split=args.split,
+            output_dir=output_path,
             output_image=img_path,
             output_scene=scene_path,
             output_blendfile=blend_path,
@@ -333,6 +337,7 @@ def render_scene(
     num_objects=5,
     output_index=0,
     output_split="none",
+    output_dir="render.png",
     output_image="render.png",
     output_scene="render_json",
     output_blendfile=None,
@@ -372,6 +377,60 @@ def render_scene(
     bpy.context.scene.cycles.transparent_max_bounces = args.render_max_bounces
     if args.use_gpu == 1:
         bpy.context.scene.cycles.device = "GPU"
+
+    # Depth/Normal/segmentation images
+    scene = bpy.context.scene
+    scene.use_nodes = True
+    bpy.context.view_layer.use_pass_normal = True
+    bpy.context.view_layer.use_pass_object_index = True
+
+    nodes = bpy.context.scene.node_tree.nodes
+    links = bpy.context.scene.node_tree.links
+
+    # Clear default nodes
+    for n in nodes:
+        nodes.remove(n)
+
+    # Create input render layer node
+    render_layers = nodes.new("CompositorNodeRLayers")
+
+    # Create depth output nodes
+    depth_file_output = nodes.new(type="CompositorNodeOutputFile")
+    depth_file_output.label = "Depth Output"
+    depth_file_output.base_path = ""
+    depth_file_output.file_slots[0].use_node_format = True
+    depth_file_output.format.file_format = "OPEN_EXR"
+    depth_file_output.format.color_depth = "16"
+    links.new(render_layers.outputs["Depth"], depth_file_output.inputs[0])
+
+    # Create normal output nodes
+    scale_node = nodes.new(type="CompositorNodeMixRGB")
+    scale_node.blend_type = "MULTIPLY"
+    # scale_node.use_alpha = True
+    scale_node.inputs[2].default_value = (0.5, 0.5, 0.5, 1)
+    links.new(render_layers.outputs["Normal"], scale_node.inputs[1])
+
+    bias_node = nodes.new(type="CompositorNodeMixRGB")
+    bias_node.blend_type = "ADD"
+    # bias_node.use_alpha = True
+    bias_node.inputs[2].default_value = (0.5, 0.5, 0.5, 0)
+    links.new(scale_node.outputs[0], bias_node.inputs[1])
+
+    normal_file_output = nodes.new(type="CompositorNodeOutputFile")
+    normal_file_output.label = "Normal Output"
+    normal_file_output.base_path = ""
+    normal_file_output.file_slots[0].use_node_format = True
+    normal_file_output.format.file_format = "OPEN_EXR"
+    links.new(bias_node.outputs[0], normal_file_output.inputs[0])
+
+    # Create id map output nodes
+    id_file_output = nodes.new(type="CompositorNodeOutputFile")
+    id_file_output.label = "ID Output"
+    id_file_output.base_path = ""
+    id_file_output.file_slots[0].use_node_format = True
+    id_file_output.format.file_format = "OPEN_EXR"
+    id_file_output.format.color_depth = "16"
+    links.new(render_layers.outputs["IndexOB"], id_file_output.inputs[0])
 
     # This will give ground-truth information about the scene and its objects
     scene_struct = {
@@ -433,12 +492,51 @@ def render_scene(
         scene_struct, num_objects, args, camera
     )
 
+    # Set object IDs
+    for ii, obj in enumerate(bpy.data.objects):
+        obj.pass_index = ii + 1
+
     # Render the scene and dump the scene data structure
     scene_struct["objects"] = objects
     scene_struct["relationships"] = compute_all_relationships(scene_struct)
+    K = get_calibration_matrix_K_from_blender(camera.data)
+    scene_struct["intrinsics"] = [list(row) for row in K]
+    scene_struct["extrinsics"] = []
+
+    # Setup camera to rotate around origin
+    cam_constraint = camera.constraints.new(type="TRACK_TO")
+    cam_constraint.track_axis = "TRACK_NEGATIVE_Z"
+    cam_constraint.up_axis = "UP_Y"
+
+    cam_empty = bpy.data.objects.new("Empty", None)
+    cam_empty.location = (0, 0, 0)
+    camera.parent = cam_empty
+
+    scene.collection.objects.link(cam_empty)
+    bpy.context.view_layer.objects.active = cam_empty
+    cam_constraint.target = cam_empty
+
+    step_size = 360.0 / 4
+    rotation_mode = "XYZ"
+
+    Rt = get_world2cam_from_blender_cam(camera)
+    cam2world = Rt.inverted()
     while True:
         try:
-            bpy.ops.render.render(write_still=True)
+            for ii in range(0, 4):
+                render_file_path = output_image + "_{0:03d}".format(int(ii * step_size))
+                bpy.context.scene.render.filepath = render_file_path
+                depth_file_output.file_slots[0].path = render_file_path + "_depth"
+                normal_file_output.file_slots[0].path = render_file_path + "_normal"
+                id_file_output.file_slots[0].path = render_file_path + "_id"
+
+                bpy.ops.render.render(write_still=True)
+
+                rot = Matrix.Rotation(math.radians(ii * step_size), 4, "Z")
+                Rt_rot = rot @ cam2world
+                scene_struct["extrinsics"].append([list(row) for row in Rt_rot])
+
+                cam_empty.rotation_euler[2] += math.radians(step_size)
             break
         except Exception as e:
             print(e)
