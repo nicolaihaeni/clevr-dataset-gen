@@ -39,7 +39,7 @@ def main():
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
 
-    out_name = f"clevr_{args.split}.h5"
+    out_name = f"clevr_3_objs_{args.split}.h5"
     out_file = h5py.File(os.path.join(args.out_dir, out_name), "w")
 
     # Create the h5 file data structure
@@ -111,9 +111,9 @@ def main():
                     img_dir,
                     f"CLEVR_{str(ii).zfill(6)}_{str(angle).zfill(3)}_depth0001.exr",
                 ),
-                cv2.IMREAD_ANYDEPTH,
+                cv2.IMREAD_UNCHANGED,
             )
-            depth_set[ii, jj] = depth  # depth in m
+            depth_set[ii, jj] = depth[:, :, 0]  # depth in m
 
             normal = cv2.imread(
                 os.path.join(

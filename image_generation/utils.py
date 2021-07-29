@@ -109,6 +109,26 @@ def add_object(object_dir, name, scale, loc, theta=0):
     bpy.ops.transform.translate(value=(x, y, scale))
 
 
+def add_ycb_object(fpath, scale, loc, theta=0):
+    """
+    Load an object from a file.
+    - scale: scalar giving the size that the object should be in the scene
+    - loc: tuple (x, y) giving the coordinates on the ground plane where the
+      object should be placed.
+    """
+    bpy.ops.import_scene.obj(filepath=str(fpath), split_mode="OFF")
+    obj = bpy.context.selected_objects[0]
+
+    # Set the new object as active, then rotate, scale, and translate it
+    x, y = loc
+    bpy.context.view_layer.objects.active = obj
+    bpy.context.object.rotation_euler[2] = theta
+    bpy.ops.transform.resize(value=(scale, scale, scale))
+
+    z = obj.dimensions.y
+    bpy.ops.transform.translate(value=(x, y, z / 2))
+
+
 def load_materials(material_dir):
     """
     Load materials from a directory. We assume that the directory contains .blend
@@ -236,9 +256,10 @@ def get_world2cam_from_blender_cam(cam):
     # Transpose since the rotation is object rotation,
     # and we want coordinate rotation
     # Use matrix_world instead to account for all constraints
-    location, rotation = cam.matrix_world.decompose()[
-        0:2
+    (location, rotation,) = cam.matrix_world.decompose()[
+        :2
     ]  # Matrix_world returns the cam2world matrix.
+
     R_world2bcam = rotation.to_matrix().transposed()
 
     # Convert camera location to translation vector used in coordinate changes

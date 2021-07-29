@@ -240,7 +240,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--camera_jitter",
-    default=0.5,
+    default=0.0,
     type=float,
     help="The magnitude of random jitter to add to the camera position",
 )
@@ -287,8 +287,9 @@ def main(args):
     )
     blend_template = os.path.join(args.output_blend_dir, args.split, blend_template)
 
-    if not os.path.isdir(args.output_dir):
+    if not os.path.isdir(os.path.join(args.output_dir, args.split, "images")):
         os.makedirs(os.path.join(args.output_dir, args.split, "images"))
+    if not os.path.isdir(os.path.join(args.output_dir, args.split, "scenes")):
         os.makedirs(os.path.join(args.output_dir, args.split, "scenes"))
     if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
         os.makedirs(os.path.join(args.output_blend_dir, args.split))
@@ -503,24 +504,10 @@ def render_scene(
     scene_struct["intrinsics"] = [list(row) for row in K]
     scene_struct["extrinsics"] = []
 
-    # Setup camera to rotate around origin
-    cam_constraint = camera.constraints.new(type="TRACK_TO")
-    cam_constraint.track_axis = "TRACK_NEGATIVE_Z"
-    cam_constraint.up_axis = "UP_Y"
-
-    cam_empty = bpy.data.objects.new("Empty", None)
-    cam_empty.location = (0, 0, 0)
-    camera.parent = cam_empty
-
-    scene.collection.objects.link(cam_empty)
-    bpy.context.view_layer.objects.active = cam_empty
-    cam_constraint.target = cam_empty
-
     step_size = 360.0 / 4
     rotation_mode = "XYZ"
 
-    Rt = get_world2cam_from_blender_cam(camera)
-    cam2world = Rt.inverted()
+    original_cam_matrix = camera.matrix_world
     while True:
         try:
             for ii in range(0, 4):
@@ -530,13 +517,14 @@ def render_scene(
                 normal_file_output.file_slots[0].path = render_file_path + "_normal"
                 id_file_output.file_slots[0].path = render_file_path + "_id"
 
-                bpy.ops.render.render(write_still=True)
-
                 rot = Matrix.Rotation(math.radians(ii * step_size), 4, "Z")
-                Rt_rot = rot @ cam2world
-                scene_struct["extrinsics"].append([list(row) for row in Rt_rot])
+                camera.matrix_world = rot @ original_cam_matrix
 
-                cam_empty.rotation_euler[2] += math.radians(step_size)
+                bpy.ops.render.render(write_still=True)
+                Rt = get_world2cam_from_blender_cam(camera)
+                cam2world = Rt.inverted()
+                scene_struct["extrinsics"].append([list(row) for row in cam2world])
+
             break
         except Exception as e:
             print(e)
